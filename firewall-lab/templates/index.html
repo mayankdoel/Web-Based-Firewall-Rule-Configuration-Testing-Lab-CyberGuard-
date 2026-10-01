@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CyberGuard - Web-Based Firewall Rule Configuration & Testing Lab</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- ==========================================
+       Sidebar Navigation
+       ========================================== -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="logo-icon">🛡️</div>
+      <div class="logo-text">
+        <span class="logo-title">Cyber<span>Guard</span></span>
+        <span class="logo-subtitle">Firewall Lab v1.0</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a class="nav-item active" data-target="sec-dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+        <span>Dashboard</span>
+      </a>
+      <a class="nav-item" data-target="sec-rules">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+        <span>Firewall Rules</span>
+        <span class="nav-badge" id="sidebar-rule-count">7</span>
+      </a>
+      <a class="nav-item" data-target="sec-tester">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+        <span>Packet Tester</span>
+      </a>
+      <a class="nav-item" data-target="sec-logs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+        <span>Activity Log</span>
+      </a>
+      <a class="nav-item" data-target="sec-topology">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+        <span>Lab Topology</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="lab-status-card">
+        <div class="lab-badge-row">
+          <span class="lab-tag">LAB MODE</span>
+          <span class="system-tag">iptables v1.8.7</span>
+        </div>
+        <div style="color: var(--text-muted); font-size: 0.7rem;">
+          Linux Kernel Netfilter Subsystem • Safe Simulation Active
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==========================================
+       Main Workspace
+       ========================================== -->
+  <main class="main-wrapper">
+    <!-- Top Bar -->
+    <header class="top-header">
+      <div class="header-left">
+        <h1 class="page-title" id="header-title">Firewall Lab Dashboard</h1>
+        <div class="header-meta-pill">
+          <div class="pulse-dot" id="header-pulse-dot"></div>
+          <span>FIREWALL:</span>
+          <strong id="header-status-badge" style="color: var(--accent-cyan);">ACTIVE</strong>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-secondary btn-sm" id="btn-refresh-rules" title="Synchronize state from iptables">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+          Refresh Rules
+        </button>
+        <button class="btn btn-danger btn-sm" id="btn-toggle-firewall">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>
+          Disable Firewall
+        </button>
+        <button class="btn btn-primary btn-sm" id="btn-open-add-modal">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Add Rule
+        </button>
+      </div>
+    </header>
+
+    <div class="content-container">
+
+      <!-- SECTION 1: DASHBOARD OVERVIEW -->
+      <section class="dashboard-section active" id="sec-dashboard">
+        
+        <!-- Metrics Grid -->
+        <div class="metrics-grid">
+          <div class="metric-card active-card">
+            <div class="metric-header">
+              <span class="metric-title">Firewall Status</span>
+              <div class="metric-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="metric-status">ACTIVE</div>
+            <div class="metric-status-text">
+              <span style="color: var(--accent-green);">● Kernel Filtering Enforced</span>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <div class="metric-header">
+              <span class="metric-title">Active Rules</span>
+              <div class="metric-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="metric-total-rules">7</div>
+            <div class="metric-status-text">Across INPUT & FORWARD chains</div>
+          </div>
+
+          <div class="metric-card danger-card">
+            <div class="metric-header">
+              <span class="metric-title">Blocked Sources</span>
+              <div class="metric-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="metric-blocked-sources" style="color: var(--accent-red);">1</div>
+            <div class="metric-status-text">Explicit blacklisted IP / Subnets</div>
+          </div>
+
+          <div class="metric-card success-card">
+            <div class="metric-header">
+              <span class="metric-title">Allowed Ports</span>
+              <div class="metric-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+              </div>
+            </div>
+            <div class="metric-value" id="metric-allowed-ports" style="color: var(--accent-green);">4</div>
+            <div class="metric-status-text">Ports: 22(SSH), 80(HTTP), 443, 53</div>
+          </div>
+        </div>
+
+        <!-- Default Policies Banner -->
+        <div class="policies-banner">
+          <div class="policies-info">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+            <div>
+              <div class="policies-title">Default iptables Chain Policies</div>
+              <div class="policies-desc">Fallthrough action applied when no custom rules match traversing packets</div>
+            </div>
+          </div>
+          <div class="policies-tags">
+            <div class="policy-badge">
+              <span class="policy-chain">INPUT:</span>
+              <span class="policy-target target-drop" id="pol-input">DROP</span>
+            </div>
+            <div class="policy-badge">
+              <span class="policy-chain">OUTPUT:</span>
+              <span class="policy-target target-accept" id="pol-output">ACCEPT</span>
+            </div>
+            <div class="policy-badge">
+              <span class="policy-chain">FORWARD:</span>
+              <span class="policy-target target-drop" id="pol-forward">DROP</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Rules Table Panel -->
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-header-left">
+              <h2 class="panel-title">Active Filter Rules</h2>
+              <span class="panel-badge">Kernel Table: filter</span>
+            </div>
+            <div class="panel-controls">
+              <div class="search-input-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input type="text" class="search-input" id="rule-search-input" placeholder="Search IP, Port, Chain...">
+              </div>
+              <select class="select-filter" id="rule-chain-filter">
+                <option value="ALL">All Chains</option>
+                <option value="INPUT">INPUT</option>
+                <option value="OUTPUT">OUTPUT</option>
+                <option value="FORWARD">FORWARD</option>
+              </select>
+              <select class="select-filter" id="rule-action-filter">
+                <option value="ALL">All Actions</option>
+                <option value="ACCEPT">ACCEPT</option>
+                <option value="DROP">DROP</option>
+                <option value="REJECT">REJECT</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="rules-table">
+              <thead>
+                <tr>
+                  <th>Rule ID</th>
+                  <th>Chain</th>
+                  <th>Proto</th>
+                  <th>Source</th>
+                  <th>Destination</th>
+                  <th>Src Port</th>
+                  <th>Dst Port</th>
+                  <th>Action</th>
+                  <th>Packets</th>
+                  <th>Bytes</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="rules-table-body">
+                <!-- Dynamically Rendered by app.js -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- SECTION 2: RULES MANAGEMENT -->
+      <section class="dashboard-section" id="sec-rules">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-header-left">
+              <h2 class="panel-title">Configured Firewall Ruleset</h2>
+              <span class="panel-badge">Sequential First-Match Evaluation</span>
+            </div>
+            <div class="panel-controls">
+              <button class="btn btn-primary btn-sm" onclick="document.getElementById('btn-open-add-modal').click()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Create New Rule
+              </button>
+            </div>
+          </div>
+          <div style="padding: 1rem 1.5rem; background: rgba(0, 240, 255, 0.03); border-bottom: 1px solid var(--border-color); font-size: 0.8rem; color: var(--text-secondary);">
+            💡 <strong>Cybersecurity Tip:</strong> iptables evaluates rules from top to bottom. The first matching rule immediately executes its action target (ACCEPT / DROP / REJECT) and packet evaluation halts.
+          </div>
+          <div class="table-responsive">
+            <table class="rules-table">
+              <thead>
+                <tr>
+                  <th>Rule ID</th>
+                  <th>Chain</th>
+                  <th>Proto</th>
+                  <th>Source</th>
+                  <th>Destination</th>
+                  <th>Src Port</th>
+                  <th>Dst Port</th>
+                  <th>Action</th>
+                  <th>Packets</th>
+                  <th>Bytes</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="rules-table-body-full">
+                <!-- Mirrored by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 3: SAFE RULE TESTING LAB -->
+      <section class="dashboard-section" id="sec-tester">
+        <div class="testing-grid">
+          
+          <div class="test-form-card">
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <h3 style="font-size: 1.15rem; font-weight: 700;">Simulate Packet Injection</h3>
+              <span class="lab-tag">SAFE LOCAL SIMULATION</span>
+            </div>
+            <p class="section-subtitle">
+              Verify firewall rule evaluation behavior before deploying to production networks. No live traffic is sent.
+            </p>
+
+            <form id="form-packet-test">
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" for="test-chain">Evaluation Chain</label>
+                  <select class="form-select" id="test-chain">
+                    <option value="INPUT">INPUT (Inbound to local host)</option>
+                    <option value="FORWARD">FORWARD (Routed through host)</option>
+                    <option value="OUTPUT">OUTPUT (Outbound from host)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="test-protocol">Protocol</label>
+                  <select class="form-select" id="test-protocol">
+                    <option value="TCP">TCP</option>
+                    <option value="UDP">UDP</option>
+                    <option value="ICMP">ICMP (Ping)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="test-src-ip">Source IP Address</label>
+                <input type="text" class="form-input" id="test-src-ip" value="198.51.100.45" placeholder="e.g. 192.168.1.50" required>
+                <div class="quick-presets">
+                  <span class="preset-chip" onclick="document.getElementById('test-src-ip').value='192.168.1.50'">192.168.1.50 (Trusted LAN)</span>
+                  <span class="preset-chip" onclick="document.getElementById('test-src-ip').value='198.51.100.45'">198.51.100.45 (Scanner)</span>
+                  <span class="preset-chip" onclick="document.getElementById('test-src-ip').value='10.0.0.99'">10.0.0.99 (External)</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="test-dst-ip">Destination IP Address</label>
+                <input type="text" class="form-input" id="test-dst-ip" value="192.168.1.10" placeholder="e.g. 192.168.1.10" required>
+                <div class="quick-presets">
+                  <span class="preset-chip" onclick="document.getElementById('test-dst-ip').value='192.168.1.10'">192.168.1.10 (Firewall VM)</span>
+                  <span class="preset-chip" onclick="document.getElementById('test-dst-ip').value='127.0.0.1'">127.0.0.1 (Loopback)</span>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="test-dst-port">Destination Port (TCP / UDP)</label>
+                <input type="text" class="form-input" id="test-dst-port" value="80" placeholder="e.g. 22, 80, 443">
+                <div class="quick-presets">
+                  <span class="preset-chip" onclick="document.getElementById('test-dst-port').value='22'">Port 22 (SSH)</span>
+                  <span class="preset-chip" onclick="document.getElementById('test-dst-port').value='80'">Port 80 (HTTP)</span>
+                  <span class="preset-chip" onclick="document.getElementById('test-dst-port').value='443'">Port 443 (HTTPS)</span>
+                  <span class="preset-chip" onclick="document.getElementById('test-dst-port').value='23'">Port 23 (Telnet)</span>
+                </div>
+              </div>
+
+              <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                Run Firewall Simulation Test
+              </button>
+            </form>
+          </div>
+
+          <div class="test-result-card">
+            <h3 style="font-size: 1.15rem; font-weight: 700;">Simulation Verdict</h3>
+            <p class="section-subtitle">Real-time packet traversal & rule resolution output</p>
+
+            <div class="verdict-box pending" id="test-verdict-box">
+              <div class="verdict-badge" id="test-verdict-text">
+                READY FOR TEST
+              </div>
+              <div class="verdict-caption">Configure packet parameters and click "Run Simulation"</div>
+            </div>
+
+            <div class="form-label">Explanation & Logic Trace:</div>
+            <div class="explanation-box" id="test-explanation-text">
+              The packet simulation engine traces the configured packet through the active iptables rule chain in order. Once evaluated, a detailed breakdown of rule matching or default policy fallback will appear here.
+            </div>
+
+            <div class="matched-rule-card" id="test-matched-rule-card" style="display: none;">
+              <h5>Rule Resolution Details</h5>
+              <ul class="rule-spec-list" id="test-matched-rule-specs">
+                <!-- Populated by JS -->
+              </ul>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- SECTION 4: ACTIVITY LOGS -->
+      <section class="dashboard-section" id="sec-logs">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-header-left">
+              <h2 class="panel-title">Audit & Activity Log</h2>
+              <span class="panel-badge">Realtime Security Stream</span>
+            </div>
+            <div class="panel-controls">
+              <button class="btn btn-secondary btn-sm" id="btn-export-logs">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Export JSON
+              </button>
+              <button class="btn btn-secondary btn-sm" id="btn-clear-logs">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                Clear Log
+              </button>
+            </div>
+          </div>
+          <div style="padding: 1.25rem;">
+            <div class="log-terminal" id="activity-log-stream">
+              <!-- Rendered by app.js -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 5: LAB TOPOLOGY & DEMONSTRATION GUIDE -->
+      <section class="dashboard-section" id="sec-topology">
+        <div class="panel" style="padding: 1.5rem;">
+          <h2 class="panel-title" style="margin-bottom: 0.5rem;">College Cybersecurity Lab Network Topology</h2>
+          <p class="section-subtitle">Recommended VirtualBox / VMware host-only network configuration for live demonstration</p>
+
+          <div class="topology-grid">
+            <div class="vm-box">
+              <div class="vm-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+              </div>
+              <div class="vm-title">VM 1: Firewall Server</div>
+              <div class="vm-ip">192.168.56.10 / 24</div>
+              <div class="vm-role-desc">
+                Runs Linux OS with native <code>iptables</code> netfilter kernel subsystem and the Flask backend management service.
+              </div>
+            </div>
+
+            <div class="vm-box">
+              <div class="vm-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+              </div>
+              <div class="vm-title">VM 2: Test Client</div>
+              <div class="vm-ip">192.168.56.20 / 24</div>
+              <div class="vm-role-desc">
+                Simulates internal / external client attempting SSH, HTTP, and ICMP ping connections to test enforcement.
+              </div>
+            </div>
+
+            <div class="vm-box">
+              <div class="vm-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+              </div>
+              <div class="vm-title">VM 3: Target Service</div>
+              <div class="vm-ip">192.168.56.30 / 24</div>
+              <div class="vm-role-desc">
+                Protected web server hosting HTTP (80) and database services behind the firewall's FORWARD filtering chain.
+              </div>
+            </div>
+          </div>
+
+          <div class="matched-rule-card">
+            <h5>Recommended Presentation Demonstration Workflow:</h5>
+            <ol style="margin-left: 1.25rem; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.8;">
+              <li><strong>Show Dashboard Status:</strong> Highlight the ACTIVE status, INPUT/OUTPUT default policies, and current rules table.</li>
+              <li><strong>Demonstrate Rule Addition:</strong> Add an INPUT DROP rule for a specific test IP (e.g. <code>192.168.56.20</code> on Port <code>22</code>) and show the real-time <code>iptables</code> command generation.</li>
+              <li><strong>Execute Simulation Test:</strong> Run a test packet from <code>192.168.56.20</code> to port <code>22</code>. The system highlights the match and renders <strong>BLOCK</strong> with clear technical reasoning.</li>
+              <li><strong>Verify Activity Log:</strong> Point out the audit trail recording rule creation, packet test timestamp, and verdict.</li>
+              <li><strong>Demonstrate Rule Deletion:</strong> Remove the rule and re-test, showing the packet is now <strong>ALLOWED</strong>.</li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- MODAL 1: ADD FIREWALL RULE -->
+  <div class="modal-backdrop" id="modal-add-rule">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Configure New Firewall Rule
+        </div>
+        <button class="modal-close" id="modal-add-close">&times;</button>
+      </div>
+
+      <form id="form-add-rule">
+        <div class="modal-body">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="rule-chain">Chain</label>
+              <select class="form-select" id="rule-chain" required>
+                <option value="INPUT" selected>INPUT (Inbound traffic)</option>
+                <option value="OUTPUT">OUTPUT (Outbound traffic)</option>
+                <option value="FORWARD">FORWARD (Routed traffic)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="rule-proto">Protocol</label>
+              <select class="form-select" id="rule-proto" required>
+                <option value="TCP" selected>TCP</option>
+                <option value="UDP">UDP</option>
+                <option value="ICMP">ICMP</option>
+                <option value="ALL">ALL</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="rule-src">Source IP / CIDR</label>
+            <input type="text" class="form-input" id="rule-src" placeholder="e.g. 192.168.1.50 or 10.0.0.0/24 (leave blank for any)">
+            <div class="quick-presets">
+              <span class="preset-chip" onclick="setSourcePreset('0.0.0.0/0')">Any (0.0.0.0/0)</span>
+              <span class="preset-chip" onclick="setSourcePreset('192.168.1.0/24')">192.168.1.0/24</span>
+              <span class="preset-chip" onclick="setSourcePreset('198.51.100.45')">198.51.100.45</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="rule-dst">Destination IP / CIDR</label>
+            <input type="text" class="form-input" id="rule-dst" placeholder="e.g. 192.168.1.10 or 0.0.0.0/0 (leave blank for any)">
+            <div class="quick-presets">
+              <span class="preset-chip" onclick="setDestPreset('0.0.0.0/0')">Any (0.0.0.0/0)</span>
+              <span class="preset-chip" onclick="setDestPreset('192.168.1.10')">192.168.1.10 (Local host)</span>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="rule-sport">Source Port (Optional)</label>
+              <input type="text" class="form-input" id="rule-sport" placeholder="1 - 65535 or blank">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="rule-dport">Destination Port</label>
+              <input type="text" class="form-input" id="rule-dport" placeholder="1 - 65535 or blank">
+              <div class="quick-presets">
+                <span class="preset-chip" onclick="setDportPreset('22')">22 (SSH)</span>
+                <span class="preset-chip" onclick="setDportPreset('80')">80 (HTTP)</span>
+                <span class="preset-chip" onclick="setDportPreset('443')">443 (HTTPS)</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="rule-action">Target Action</label>
+            <select class="form-select" id="rule-action" required>
+              <option value="ACCEPT">ACCEPT (Allow packet through)</option>
+              <option value="DROP" selected>DROP (Silently discard packet)</option>
+              <option value="REJECT">REJECT (Discard & return ICMP error)</option>
+            </select>
+          </div>
+
+          <div class="cmd-preview-box">
+            <div class="cmd-preview-header">
+              <span>Generated iptables Command Preview</span>
+              <span style="color: var(--accent-cyan);">NETFILTER SYNTAX</span>
+            </div>
+            <div class="cmd-preview-text" id="iptables-cmd-preview">
+              iptables -A INPUT -p tcp -j DROP
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="modal-add-cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            Add Firewall Rule
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 2: DELETE CONFIRMATION -->
+  <div class="modal-backdrop" id="modal-delete-confirm">
+    <div class="modal-card" style="max-width: 480px;">
+      <div class="modal-header">
+        <div class="modal-title" style="color: var(--accent-red);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+          Confirm Rule Deletion
+        </div>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
+          Are you sure you want to remove this rule from the active kernel firewall table?
+        </p>
+        <div style="background: var(--bg-input); border: 1px solid var(--border-color); padding: 0.75rem; border-radius: var(--radius-md); font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-primary);" id="delete-rule-details">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-delete">Cancel</button>
+        <button type="button" class="btn btn-danger" id="btn-confirm-delete">Delete Rule</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 3: DISABLE FIREWALL SAFETY WARNING -->
+  <div class="modal-backdrop" id="modal-disable-confirm">
+    <div class="modal-card" style="max-width: 500px;">
+      <div class="modal-header">
+        <div class="modal-title" style="color: var(--accent-yellow);">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+          Safety Confirmation: Disable Firewall
+        </div>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 0.75rem; line-height: 1.6;">
+          ⚠️ <strong>Security Warning:</strong> Disabling the firewall will switch all chain default policies to <strong>ACCEPT</strong> and bypass all security filter rules. Unfiltered incoming packets will reach all local network services.
+        </p>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">
+          Are you sure you want to proceed with deactivating the firewall subsystem?
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-disable">Keep Firewall Active</button>
+        <button type="button" class="btn btn-danger" id="btn-confirm-disable">Yes, Disable Firewall</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toast-container"></div>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
