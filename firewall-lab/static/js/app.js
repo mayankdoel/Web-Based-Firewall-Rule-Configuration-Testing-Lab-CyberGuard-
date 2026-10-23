@@ -1,6 +1,6 @@
 /**
  * CyberGuard Firewall Lab — Phase 2 Frontend
- * All state is now loaded from the Flask REST API.
+ * All state is loaded from the Flask REST API.
  * In-memory APP_STATE is used as a local cache.
  */
 
@@ -36,10 +36,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 // 3. API helpers
 // ==========================================
 async function apiFetch(path, options = {}) {
-  const defaults = { headers: { 'Content-Type': 'application/json' } };
-  const res = await fetch(API_BASE + path, { ...defaults, ...options });
-  const json = await res.json().catch(() => ({ success: false, error: 'Invalid response' }));
-  return { ok: res.ok, status: res.status, data: json };
+  const mergedOptions = {
+    method: options.method || 'GET',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  };
+  if (options.body) mergedOptions.body = options.body;
+
+  try {
+    const res = await fetch(API_BASE + path, mergedOptions);
+    const json = await res.json().catch(() => ({ success: false, error: 'Invalid JSON response' }));
+    return { ok: res.ok, status: res.status, data: json };
+  } catch (err) {
+    return { ok: false, status: 0, data: { success: false, error: 'Network error: ' + err.message } };
+  }
 }
 
 // ==========================================
@@ -96,12 +105,12 @@ function renderMetrics() {
     headerStatus.style.color = active ? 'var(--green,#15803d)' : 'var(--red,#dc2626)';
   }
 
-  setEl('metric-total-rules',    rules.length);
+  setEl('metric-total-rules',     rules.length);
   setEl('metric-blocked-sources', rules.filter(r =>
     (r.action === 'DROP' || r.action === 'REJECT') && r.src_ip !== '0.0.0.0/0').length);
   setEl('metric-allowed-ports',   rules.filter(r =>
     r.action === 'ACCEPT' && r.dst_port !== 'any').length);
-  setEl('sidebar-rule-count',    rules.length);
+  setEl('sidebar-rule-count',     rules.length);
 
   const setPolicy = (id, val) => {
     const el = document.getElementById(id);
@@ -115,43 +124,22 @@ function renderMetrics() {
   setPolicy('pol-output',  APP_STATE.policies.OUTPUT);
   setPolicy('pol-forward', APP_STATE.policies.FORWARD);
 
-  // Pulse dot
+  // Pulse dot colour
   const dot = document.getElementById('header-pulse-dot');
-  if (dot) dot.style.background = active ? 'var(--accent-green, #22c55e)' : 'var(--accent-red, #ef4444)';
+  if (dot) dot.style.background = active ? 'var(--accent-green, #16a34a)' : 'var(--accent-red, #dc2626)';
 }
 
-function renderRulesTable() {
-  const tbody       = document.getElementById('rules-table-body');
-  if (!tbody) return;
-  const chainFilter  = document.getElementById('rule-chain-filter')?.value  || 'ALL';
-  const actionFilter = document.getElementById('rule-action-filter')?.value || 'ALL';
-  const searchTerm   = (document.getElementById('rule-search-input')?.value || '').toLowerCase();
-
-  let filtered = APP_STATE.rules.filter(r => {
-    if (chainFilter  !== 'ALL' && r.chain  !== chainFilter)  return false;
-    if (actionFilter !== 'ALL' && r.action !== actionFilter) return false;
-    if (searchTerm) {
-      const blob = `${r.src_ip} ${r.dst_ip} ${r.chain} ${r.protocol} ${r.dst_port} ${r.action}`.toLowerCase();
-      if (!blob.includes(searchTerm)) return false;
-    }
-    return true;
-  });
-
+function buildRuleRows(filtered) {
   if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:var(--text-muted,#6b7280);padding:24px;">No rules match the current filter.</td></tr>';
-    return;
+    return '<tr><td colspan="12" style="text-align:center;color:var(--text-muted);padding:24px 0;font-size:0.85rem;">No rules match the current filter.</td></tr>';
   }
-
-  tbody.innerHTML = filtered.map(r => {
+  return filtered.map(r => {
     const actionClass = 'action-' + r.action.toLowerCase();
     const statusDot   = r.status === 'ACTIVE' ? '●' : '○';
-    // Handle both simple index.html and advanced templates/index.html table column counts
-    const statusCol = document.querySelector('th:nth-child(11)')
-      ? `<td style="color: var(--accent-green, #22c55e); font-family: monospace;">${statusDot} ${esc(r.status)}</td>`
-      : '';
+    const statusColor = r.status === 'ACTIVE' ? 'var(--accent-green)' : 'var(--text-muted)';
     return `<tr>
-      <td>#${r.id}</td>
-      <td>${esc(r.chain)}</td>
+      <td style="color:var(--text-muted);font-size:0.75rem;">#${r.id}</td>
+      <td><span class="chain-badge chain-${r.chain.toLowerCase()}">${esc(r.chain)}</span></td>
       <td>${esc(r.protocol)}</td>
       <td>${esc(r.src_ip)}</td>
       <td>${esc(r.dst_ip)}</td>
@@ -159,31 +147,142 @@ function renderRulesTable() {
       <td>${esc(r.dst_port)}</td>
       <td class="${actionClass}">${esc(r.action)}</td>
       <td>${Number(r.packets).toLocaleString()}</td>
-      <td>${r.bytes}</td>
-      ${statusCol}
+      <td>${esc(r.bytes)}</td>
+      <td style="color:${statusColor};font-family:monospace;">${statusDot} ${esc(r.status)}</td>
       <td>
-        <button class="btn btn-sm" onclick="prefillTest(${r.id})" title="Prefill Packet Tester">▶</button>
-        <button class="btn btn-sm" onclick="confirmDelete(${r.id})" title="Delete Rule" style="color:var(--red,#dc2626);">✕</button>
+        <button class="btn btn-sm btn-icon" onclick="prefillTest(${r.id})" title="Prefill Packet Tester">▶</button>
+        <button class="btn btn-sm btn-icon btn-icon-danger" onclick="confirmDelete(${r.id})" title="Delete Rule">✕</button>
       </td>
     </tr>`;
   }).join('');
+}
+
+function renderRulesTable() {
+  const chainFilter  = document.getElementById('rule-chain-filter')?.value  || 'ALL';
+  const actionFilter = document.getElementById('rule-action-filter')?.value || 'ALL';
+  const searchTerm   = (document.getElementById('rule-search-input')?.value || '').toLowerCase();
+
+  const filtered = APP_STATE.rules.filter(r => {
+    if (chainFilter  !== 'ALL' && r.chain  !== chainFilter)  return false;
+    if (actionFilter !== 'ALL' && r.action !== actionFilter) return false;
+    if (searchTerm) {
+      const blob = `${r.src_ip} ${r.dst_ip} ${r.chain} ${r.protocol} ${r.dst_port} ${r.src_port} ${r.action}`.toLowerCase();
+      if (!blob.includes(searchTerm)) return false;
+    }
+    return true;
+  });
+
+  const html = buildRuleRows(filtered);
+
+  // Populate dashboard quick-view table
+  const tbody = document.getElementById('rules-table-body');
+  if (tbody) tbody.innerHTML = html;
+
+  // Populate the dedicated Firewall Rules section table
+  const tbodyFull = document.getElementById('rules-table-body-full');
+  if (tbodyFull) tbodyFull.innerHTML = html;
 }
 
 function renderLogs() {
   const container = document.getElementById('activity-log-stream');
   if (!container) return;
   if (APP_STATE.logs.length === 0) {
-    container.innerHTML = '<div style="color:var(--text-muted,#6b7280);text-align:center;padding:12px;">No logs yet.</div>';
+    container.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:20px;font-size:0.85rem;">No activity logs yet.</div>';
     return;
   }
-  container.innerHTML = APP_STATE.logs.map(l =>
-    `<div class="log-item"><span style="color:var(--blue,#2563eb);">[${esc(l.created_at || '')}]</span> <strong>${esc(l.tag)}</strong> ${esc(l.message)}</div>`
-  ).join('');
+  const tagColors = {
+    RULE_ADD:    '#16a34a',
+    RULE_DELETE: '#dc2626',
+    TEST:        '#2563eb',
+    STATUS:      '#d97706',
+    SYNC:        '#0891b2',
+    DELETE:      '#dc2626',
+  };
+  container.innerHTML = APP_STATE.logs.map(l => {
+    const tagColor = tagColors[l.tag] || '#4f46e5';
+    const resultBg =
+      (l.result === 'SUCCESS' || l.result === 'ALLOW')   ? 'rgba(22,163,74,0.1)'  :
+      (l.result === 'BLOCK'   || l.result === 'BLOCKED') ? 'rgba(220,38,38,0.1)'  :
+      'rgba(0,0,0,0.04)';
+    const resultColor =
+      (l.result === 'SUCCESS' || l.result === 'ALLOW')   ? '#16a34a' :
+      (l.result === 'BLOCK'   || l.result === 'BLOCKED') ? '#dc2626' :
+      '#94a3b8';
+    return `<div class="log-item">
+      <span class="log-ts">[${esc(l.created_at || '')}]</span>
+      <span class="log-tag" style="color:${tagColor};">${esc(l.tag)}</span>
+      <span class="log-msg">${esc(l.message)}</span>
+      <span class="log-result" style="background:${resultBg};color:${resultColor};">${esc(l.result)}</span>
+    </div>`;
+  }).join('');
+  container.scrollTop = 0;
 }
 
 // ==========================================
 // 6. Add Rule Modal
 // ==========================================
+// --- Client-side validation helpers ---
+function isValidIpOrCidr(s) {
+  if (!s || s === 'any' || s === '0.0.0.0/0') return true;
+  if (s.includes('/')) {
+    const [ip, prefix] = s.split('/');
+    const pfx = parseInt(prefix, 10);
+    return isValidIp(ip) && !isNaN(pfx) && pfx >= 0 && pfx <= 32;
+  }
+  return isValidIp(s);
+}
+function isValidIp(s) {
+  const parts = s.split('.');
+  if (parts.length !== 4) return false;
+  return parts.every(p => /^\d{1,3}$/.test(p) && parseInt(p, 10) >= 0 && parseInt(p, 10) <= 255);
+}
+function isValidPort(s) {
+  if (!s || s === 'any') return true;
+  return /^\d+$/.test(s) && parseInt(s, 10) >= 1 && parseInt(s, 10) <= 65535;
+}
+
+function setFieldError(id, msg) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.borderColor = msg ? '#dc2626' : '';
+  el.style.boxShadow   = msg ? '0 0 0 3px rgba(220,38,38,0.12)' : '';
+  let hint = el.parentElement.querySelector('.field-error-hint');
+  if (msg) {
+    if (!hint) { hint = document.createElement('div'); hint.className = 'field-error-hint'; el.parentElement.appendChild(hint); }
+    hint.textContent = msg;
+    hint.style.cssText = 'color:#dc2626;font-size:0.72rem;margin-top:3px;';
+  } else {
+    hint?.remove();
+  }
+}
+
+function clearFieldErrors() {
+  ['rule-src','rule-dst','rule-sport','rule-dport'].forEach(id => setFieldError(id, ''));
+}
+
+function validateRuleForm(payload) {
+  let valid = true;
+  clearFieldErrors();
+
+  if (!isValidIpOrCidr(payload.src_ip)) {
+    setFieldError('rule-src', `Invalid IP/CIDR: "${payload.src_ip}". Use format 192.168.1.0 or 10.0.0.0/24`);
+    valid = false;
+  }
+  if (!isValidIpOrCidr(payload.dst_ip)) {
+    setFieldError('rule-dst', `Invalid IP/CIDR: "${payload.dst_ip}". Use format 192.168.1.0 or 0.0.0.0/0`);
+    valid = false;
+  }
+  if (!isValidPort(payload.src_port)) {
+    setFieldError('rule-sport', `Invalid port "${payload.src_port}". Must be 1-65535 or blank.`);
+    valid = false;
+  }
+  if (!isValidPort(payload.dst_port)) {
+    setFieldError('rule-dport', `Invalid port "${payload.dst_port}". Must be 1-65535 or blank.`);
+    valid = false;
+  }
+  return valid;
+}
+
 function initAddRuleModal() {
   const modal     = document.getElementById('modal-add-rule');
   const openBtn   = document.getElementById('btn-open-add-modal');
@@ -192,8 +291,17 @@ function initAddRuleModal() {
   const form      = document.getElementById('form-add-rule');
   if (!modal || !form) return;
 
-  const open  = () => { modal.style.display = 'flex'; updateCmdPreview(); };
-  const close = () => { modal.style.display = 'none'; form.reset(); };
+  const open = () => {
+    modal.style.display = 'flex';
+    clearFieldErrors();
+    updateCmdPreview();
+  };
+  const close = () => {
+    modal.style.display = 'none';
+    form.reset();
+    clearFieldErrors();
+    updateCmdPreview();
+  };
 
   openBtn?.addEventListener('click', open);
   closeBtn?.addEventListener('click', close);
@@ -202,40 +310,60 @@ function initAddRuleModal() {
 
   ['rule-chain','rule-proto','rule-src','rule-dst','rule-sport','rule-dport','rule-action'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) { el.addEventListener('input', updateCmdPreview); el.addEventListener('change', updateCmdPreview); }
+    if (el) {
+      el.addEventListener('input',  updateCmdPreview);
+      el.addEventListener('change', updateCmdPreview);
+      el.addEventListener('input',  () => setFieldError(id, '')); // clear error on type
+    }
   });
+
+  const submitBtn = form.querySelector('[type=submit]');
+  const submitOrigHTML = submitBtn ? submitBtn.innerHTML : '';
 
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const payload = {
       chain:    document.getElementById('rule-chain').value,
       protocol: document.getElementById('rule-proto').value,
-      src_ip:   document.getElementById('rule-src').value.trim()   || '0.0.0.0/0',
-      dst_ip:   document.getElementById('rule-dst').value.trim()   || '0.0.0.0/0',
-      src_port: document.getElementById('rule-sport').value.trim() || 'any',
-      dst_port: document.getElementById('rule-dport').value.trim() || 'any',
+      src_ip:   (document.getElementById('rule-src').value.trim()   || '0.0.0.0/0'),
+      dst_ip:   (document.getElementById('rule-dst').value.trim()   || '0.0.0.0/0'),
+      src_port: (document.getElementById('rule-sport').value.trim() || 'any'),
+      dst_port: (document.getElementById('rule-dport').value.trim() || 'any'),
       action:   document.getElementById('rule-action').value,
     };
 
-    const submitBtn = form.querySelector('[type=submit]');
-    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Saving…'; }
+    // Client-side validation first
+    if (!validateRuleForm(payload)) {
+      showAlert('✕ Please fix the highlighted fields before saving.', 'danger');
+      return;
+    }
+
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.innerHTML = '<span style="opacity:.7">⏳ Saving…</span>'; }
 
     const { ok, data } = await apiFetch('/api/rules', {
-      method: 'POST', body: JSON.stringify(payload)
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
 
-    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Add Rule'; }
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = submitOrigHTML; }
 
     if (ok && data.success) {
-      APP_STATE.rules.push(data.rule);
+      // Reload from DB so IDs and all fields are correct
+      await loadRules();
+      await loadLogs();
       close();
       renderMetrics();
       renderRulesTable();
-      await loadLogs();
       renderLogs();
-      showAlert(`✓ Rule #${data.rule.id} added successfully!`, 'success');
+      showAlert(`✓ Rule #${data.rule.id} added — ${data.rule.chain} ${data.rule.protocol} → ${data.rule.action}`, 'success');
     } else {
-      showAlert('✕ Error: ' + (data.error || 'Could not add rule'), 'danger');
+      const errMsg = data.error || 'Could not add rule';
+      showAlert('✕ ' + errMsg, 'danger');
+      // Try to highlight the relevant field
+      if (errMsg.toLowerCase().includes('source ip') || errMsg.toLowerCase().includes('src_ip')) setFieldError('rule-src', errMsg);
+      else if (errMsg.toLowerCase().includes('destination ip') || errMsg.toLowerCase().includes('dst_ip')) setFieldError('rule-dst', errMsg);
+      else if (errMsg.toLowerCase().includes('source port')) setFieldError('rule-sport', errMsg);
+      else if (errMsg.toLowerCase().includes('destination port')) setFieldError('rule-dport', errMsg);
     }
   });
 }
@@ -243,13 +371,13 @@ function initAddRuleModal() {
 function updateCmdPreview() {
   const chain  = document.getElementById('rule-chain')?.value  || 'INPUT';
   const proto  = document.getElementById('rule-proto')?.value  || 'TCP';
-  const src    = document.getElementById('rule-src')?.value.trim();
-  const dst    = document.getElementById('rule-dst')?.value.trim();
-  const sport  = document.getElementById('rule-sport')?.value.trim();
-  const dport  = document.getElementById('rule-dport')?.value.trim();
+  const src    = document.getElementById('rule-src')?.value.trim()   || '';
+  const dst    = document.getElementById('rule-dst')?.value.trim()   || '';
+  const sport  = document.getElementById('rule-sport')?.value.trim() || '';
+  const dport  = document.getElementById('rule-dport')?.value.trim() || '';
   const action = document.getElementById('rule-action')?.value || 'DROP';
 
-  let parts = ['iptables', '-A', chain];
+  const parts = ['iptables', '-A', chain];
   if (proto !== 'ALL') parts.push('-p', proto.toLowerCase());
   if (src && src !== '0.0.0.0/0') parts.push('-s', src);
   if (dst && dst !== '0.0.0.0/0') parts.push('-d', dst);
@@ -287,19 +415,20 @@ function initDeleteModal() {
   cancel?.addEventListener('click', close);
   confirm?.addEventListener('click', async () => {
     if (deleteTarget === null) return;
-    confirm.disabled = true; confirm.textContent = 'Deleting…';
+    const origHTML = confirm.innerHTML;
+    confirm.disabled = true; confirm.innerHTML = '⏳ Deleting…';
 
     const { ok, data } = await apiFetch(`/api/rules/${deleteTarget}`, { method: 'DELETE' });
 
-    confirm.disabled = false; confirm.textContent = 'Delete';
+    confirm.disabled = false; confirm.innerHTML = origHTML;
     if (ok && data.success) {
       APP_STATE.rules = APP_STATE.rules.filter(r => r.id !== deleteTarget);
       close();
+      await loadLogs();
       renderMetrics();
       renderRulesTable();
-      await loadLogs();
       renderLogs();
-      showAlert(`Rule #${data.deleted_id} deleted`, 'danger');
+      showAlert(`🗑 Rule #${data.deleted_id} deleted successfully`, 'danger');
     } else {
       showAlert('✕ Error deleting rule: ' + (data.error || 'Unknown error'), 'danger');
       close();
@@ -311,10 +440,10 @@ function initDeleteModal() {
 // 8. Firewall Toggle
 // ==========================================
 function initFirewallToggle() {
-  const toggleBtn   = document.getElementById('btn-toggle-firewall');
+  const toggleBtn    = document.getElementById('btn-toggle-firewall');
   const disableModal = document.getElementById('modal-disable-confirm');
-  const cancelBtn   = document.getElementById('btn-cancel-disable');
-  const confirmBtn  = document.getElementById('btn-confirm-disable');
+  const cancelBtn    = document.getElementById('btn-cancel-disable');
+  const confirmBtn   = document.getElementById('btn-confirm-disable');
   if (!toggleBtn) return;
 
   toggleBtn.addEventListener('click', () => {
@@ -336,7 +465,7 @@ function initFirewallToggle() {
 async function performFirewallToggle(newState) {
   const { ok, data } = await apiFetch('/api/firewall/toggle', {
     method: 'POST',
-    body: JSON.stringify({ active: newState })
+    body: JSON.stringify({ active: newState }),
   });
   if (ok && data.success) {
     APP_STATE.firewallActive = data.firewall_active;
@@ -345,7 +474,7 @@ async function performFirewallToggle(newState) {
     await loadLogs();
     renderLogs();
     showAlert(
-      data.firewall_active ? '🟢 Firewall ACTIVATED' : '🔴 Firewall DISABLED — all traffic passing',
+      data.firewall_active ? '🟢 Firewall ACTIVATED — kernel filtering enforced' : '🔴 Firewall DISABLED — all traffic passing',
       data.firewall_active ? 'success' : 'danger'
     );
   }
@@ -355,17 +484,19 @@ function updateFirewallToggleUI() {
   const toggleBtn = document.getElementById('btn-toggle-firewall');
   if (!toggleBtn) return;
   if (APP_STATE.firewallActive) {
-    toggleBtn.textContent = 'Disable Firewall';
-    toggleBtn.className = toggleBtn.className.replace('btn-success', '').trim();
+    toggleBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg> Disable Firewall`;
+    toggleBtn.className = toggleBtn.className.replace('btn-success', 'btn-danger').replace(/\s+/g, ' ').trim();
+    if (!toggleBtn.className.includes('btn-danger')) toggleBtn.className += ' btn-danger';
   } else {
-    toggleBtn.textContent = 'Enable Firewall';
+    toggleBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg> Enable Firewall`;
+    toggleBtn.className = toggleBtn.className.replace('btn-danger', 'btn-success').replace(/\s+/g, ' ').trim();
     if (!toggleBtn.className.includes('btn-success')) toggleBtn.className += ' btn-success';
   }
 }
 
 function updateLabModeBadge(labMode, dryRun) {
-  const labTag    = document.querySelector('.lab-tag');
-  const sysTag    = document.querySelector('.system-tag');
+  const labTag = document.querySelector('.lab-tag');
+  const sysTag = document.querySelector('.system-tag');
   if (labTag) labTag.textContent = labMode ? 'LAB MODE' : 'LIVE MODE';
   if (sysTag) sysTag.textContent = dryRun ? 'DRY-RUN' : 'KERNEL EXEC';
 }
@@ -376,16 +507,17 @@ function updateLabModeBadge(labMode, dryRun) {
 function initRefreshBtn() {
   const btn = document.getElementById('btn-refresh-rules');
   if (!btn) return;
+  const origHTML = btn.innerHTML;
   btn.addEventListener('click', async () => {
-    btn.disabled = true;
+    btn.disabled = true; btn.innerHTML = '⏳ Syncing…';
     await loadAll();
-    btn.disabled = false;
+    btn.disabled = false; btn.innerHTML = origHTML;
     showAlert('✓ Synced from database', 'success');
   });
 }
 
 // ==========================================
-// 10. Packet Tester — now calls /api/simulate
+// 10. Packet Tester — calls /api/simulate
 // ==========================================
 function initTestSimulator() {
   const form = document.getElementById('form-packet-test');
@@ -393,21 +525,26 @@ function initTestSimulator() {
 
   form.addEventListener('submit', async e => {
     e.preventDefault();
-    const srcIp  = document.getElementById('test-src-ip').value.trim();
-    const dstIp  = document.getElementById('test-dst-ip').value.trim();
-    const proto  = document.getElementById('test-protocol').value;
-    const dport  = document.getElementById('test-dst-port').value.trim();
-    const chain  = document.getElementById('test-chain').value;
+    const srcIp  = document.getElementById('test-src-ip')?.value.trim()   || '';
+    const dstIp  = document.getElementById('test-dst-ip')?.value.trim()   || '';
+    const proto  = document.getElementById('test-protocol')?.value         || 'TCP';
+    const dport  = document.getElementById('test-dst-port')?.value.trim() || 'any';
+    const chain  = document.getElementById('test-chain')?.value            || 'INPUT';
+
+    if (!isValidIp(srcIp)) { showAlert('✕ Invalid Source IP address', 'danger'); return; }
+    if (!isValidIp(dstIp)) { showAlert('✕ Invalid Destination IP address', 'danger'); return; }
+    if (!isValidPort(dport) && dport !== 'any') { showAlert('✕ Invalid destination port', 'danger'); return; }
 
     const submitBtn = form.querySelector('[type=submit]');
-    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '⏳ Simulating…'; }
+    const origHTML  = submitBtn ? submitBtn.innerHTML : '';
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.innerHTML = '⏳ Simulating…'; }
 
     const { ok, data } = await apiFetch('/api/simulate', {
       method: 'POST',
-      body: JSON.stringify({ src_ip: srcIp, dst_ip: dstIp, protocol: proto, dst_port: dport || 'any', chain })
+      body: JSON.stringify({ src_ip: srcIp, dst_ip: dstIp, protocol: proto, dst_port: dport, chain }),
     });
 
-    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '▶ Run Simulation'; }
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = origHTML; }
 
     if (ok && data.success) {
       displayResult(data);
@@ -429,10 +566,10 @@ function displayResult(result) {
 
   if (result.verdict === 'ALLOW') {
     box.className = 'verdict-display verdict-allow';
-    text.textContent = '✓ ALLOW';
+    if (text) text.textContent = '✓ ALLOW';
   } else {
     box.className = 'verdict-display verdict-block';
-    text.textContent = '✕ BLOCK';
+    if (text) text.textContent = '✕ BLOCK';
   }
   if (explanation) explanation.textContent = result.explanation || '';
   if (matchCard) {
@@ -451,17 +588,29 @@ function displayResult(result) {
 window.prefillTest = function(id) {
   const rule = APP_STATE.rules.find(r => r.id === id);
   if (!rule) return;
+
+  // Navigate to tester section first
+  document.querySelectorAll('.nav-item[data-target]').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.dashboard-section').forEach(s => s.classList.remove('active'));
+  const testerNav = document.querySelector('.nav-item[data-target="sec-tester"]');
+  if (testerNav) testerNav.classList.add('active');
+  document.getElementById('sec-tester')?.classList.add('active');
+  const titleEl = document.getElementById('header-title');
+  if (titleEl) titleEl.textContent = 'Packet Tester';
+
+  // Fill in form fields
   const src   = document.getElementById('test-src-ip');
   const proto = document.getElementById('test-protocol');
   const dport = document.getElementById('test-dst-port');
   const chain = document.getElementById('test-chain');
 
-  if (rule.src_ip === '0.0.0.0/0') src.value = '192.168.1.50';
-  else if (rule.src_ip.includes('/')) src.value = rule.src_ip.split('/')[0].replace(/\.0$/, '.10');
-  else src.value = rule.src_ip;
-
-  if (rule.protocol !== 'ALL') proto.value = rule.protocol;
-  dport.value = rule.dst_port !== 'any' ? rule.dst_port : '80';
+  if (src) {
+    if (rule.src_ip === '0.0.0.0/0') src.value = '192.168.1.50';
+    else if (rule.src_ip.includes('/')) src.value = rule.src_ip.split('/')[0].replace(/\.0$/, '.10');
+    else src.value = rule.src_ip;
+  }
+  if (proto && rule.protocol !== 'ALL') proto.value = rule.protocol;
+  if (dport) dport.value = rule.dst_port !== 'any' ? rule.dst_port : '80';
   if (chain) chain.value = rule.chain;
 
   document.getElementById('form-packet-test')?.scrollIntoView({ behavior: 'smooth' });
@@ -472,10 +621,12 @@ window.prefillTest = function(id) {
 // ==========================================
 function initActivityLog() {
   document.getElementById('btn-clear-logs')?.addEventListener('click', async () => {
-    await apiFetch('/api/logs', { method: 'DELETE' });
-    APP_STATE.logs = [];
-    renderLogs();
-    showAlert('Logs cleared', 'success');
+    const { ok } = await apiFetch('/api/logs', { method: 'DELETE' });
+    if (ok) {
+      APP_STATE.logs = [];
+      renderLogs();
+      showAlert('✓ Logs cleared', 'success');
+    }
   });
 
   document.getElementById('btn-export-logs')?.addEventListener('click', () => {
@@ -493,7 +644,7 @@ function initFilters() {
 }
 
 // ==========================================
-// 13. Sidebar navigation (advanced template)
+// 13. Sidebar navigation
 // ==========================================
 function initNav() {
   const navItems = document.querySelectorAll('.nav-item[data-target]');
@@ -519,7 +670,7 @@ function initNav() {
 }
 
 // ==========================================
-// 14. Alert
+// 14. Toast / Alert
 // ==========================================
 function showAlert(msg, type) {
   const el = document.getElementById('alert-box');
@@ -527,7 +678,9 @@ function showAlert(msg, type) {
   el.textContent = msg;
   el.className = 'alert alert-' + (type === 'danger' ? 'danger' : 'success');
   el.style.display = 'block';
-  setTimeout(() => { el.style.display = 'none'; }, 3500);
+  // Auto-hide after 4 seconds
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => { el.style.display = 'none'; }, 4000);
 }
 
 // ==========================================
@@ -546,14 +699,13 @@ function esc(s) {
 // Preset chip helpers (called from inline onclick in templates/index.html)
 window.setSourcePreset = function(val) {
   const el = document.getElementById('rule-src');
-  if (el) { el.value = val; updateCmdPreview(); }
+  if (el) { el.value = val; setFieldError('rule-src', ''); updateCmdPreview(); }
 };
 window.setDestPreset = function(val) {
   const el = document.getElementById('rule-dst');
-  if (el) { el.value = val; updateCmdPreview(); }
+  if (el) { el.value = val; setFieldError('rule-dst', ''); updateCmdPreview(); }
 };
 window.setDportPreset = function(val) {
   const el = document.getElementById('rule-dport');
-  if (el) { el.value = val; updateCmdPreview(); }
+  if (el) { el.value = val; setFieldError('rule-dport', ''); updateCmdPreview(); }
 };
-

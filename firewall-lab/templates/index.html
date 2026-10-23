@@ -238,7 +238,7 @@
               </button>
             </div>
           </div>
-          <div style="padding: 1rem 1.5rem; background: rgba(0, 240, 255, 0.03); border-bottom: 1px solid var(--border-color); font-size: 0.8rem; color: var(--text-secondary);">
+          <div style="padding: 1rem 1.5rem; background: rgba(79, 70, 229, 0.04); border-bottom: 1px solid rgba(79,70,229,0.1); font-size: 0.8rem; color: var(--text-secondary);">
             💡 <strong>Cybersecurity Tip:</strong> iptables evaluates rules from top to bottom. The first matching rule immediately executes its action target (ACCEPT / DROP / REJECT) and packet evaluation halts.
           </div>
           <div class="table-responsive">
@@ -595,6 +595,7 @@
   </div>
 
   <div class="toast-container" id="toast-container"></div>
+  <div id="alert-box" class="alert" style="display:none;"></div>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
