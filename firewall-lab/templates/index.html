@@ -92,6 +92,11 @@
 
     <div class="content-container">
 
+      <div class="rollback-banner" id="rollback-banner" role="status" hidden>
+        <span>Rules applied. Click Confirm within 60 seconds or they will roll back.</span>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-confirm-firewall">Confirm Rules</button>
+      </div>
+
       <!-- SECTION 1: DASHBOARD OVERVIEW -->
       <section class="dashboard-section active" id="sec-dashboard">
         
@@ -596,6 +601,7 @@
 
   <div class="toast-container" id="toast-container"></div>
   <div id="alert-box" class="alert" style="display:none;"></div>
+  <script>window.CYBERGUARD_API_TOKEN = {{ api_token|tojson }};</script>
   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

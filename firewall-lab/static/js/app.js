@@ -13,9 +13,12 @@ const APP_STATE = {
   policies: { INPUT: 'DROP', OUTPUT: 'ACCEPT', FORWARD: 'DROP' },
   rules: [],
   logs: [],
+  liveCounters: {},
+  firewallLive: false,
 };
 
 const API_BASE = '';   // Same origin when served via Flask
+const API_TOKEN = window.CYBERGUARD_API_TOKEN || '';
 
 // ==========================================
 // 2. Init
@@ -28,8 +31,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   initActivityLog();
   initFilters();
   initFirewallToggle();
+  document.getElementById('btn-confirm-firewall')?.addEventListener('click', confirmFirewallRules);
   initRefreshBtn();
   await loadAll();
+  refreshLiveCounters();
+  window.setInterval(refreshLiveCounters, 3000);
 });
 
 // ==========================================
@@ -38,7 +44,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function apiFetch(path, options = {}) {
   const mergedOptions = {
     method: options.method || 'GET',
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: { 'Content-Type': 'application/json', 'X-API-Token': API_TOKEN, ...(options.headers || {}) },
   };
   if (options.body) mergedOptions.body = options.body;
 
@@ -66,9 +72,11 @@ async function loadStatus() {
   if (ok && data.success) {
     APP_STATE.firewallActive = data.firewall_active;
     APP_STATE.labMode        = data.lab_mode;
+    APP_STATE.firewallLive   = Boolean(data.live);
     APP_STATE.policies       = data.policies;
     updateFirewallToggleUI();
     updateLabModeBadge(data.lab_mode, data.dry_run);
+    setRollbackBanner(Boolean(data.rollback_pending));
   }
 }
 
@@ -84,6 +92,29 @@ async function loadLogs() {
   if (ok && data.success) {
     APP_STATE.logs = data.logs;
   }
+}
+
+async function refreshLiveCounters() {
+  if (!APP_STATE.firewallLive) return;
+  const { ok, data } = await apiFetch('/api/live/counters');
+  if (!ok || !data || typeof data !== 'object') return;
+  APP_STATE.liveCounters = data;
+  renderRulesTable();
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let size = value / 1024;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit += 1; }
+  return `${size.toFixed(1)} ${units[unit]}`;
+}
+
+function setRollbackBanner(visible) {
+  const banner = document.getElementById('rollback-banner');
+  if (banner) banner.hidden = !visible;
 }
 
 // ==========================================
@@ -134,6 +165,7 @@ function buildRuleRows(filtered) {
     return '<tr><td colspan="12" style="text-align:center;color:var(--text-muted);padding:24px 0;font-size:0.85rem;">No rules match the current filter.</td></tr>';
   }
   return filtered.map(r => {
+    const counters = APP_STATE.liveCounters[String(r.id)];
     const actionClass = 'action-' + r.action.toLowerCase();
     const statusDot   = r.status === 'ACTIVE' ? '●' : '○';
     const statusColor = r.status === 'ACTIVE' ? 'var(--accent-green)' : 'var(--text-muted)';
@@ -146,8 +178,8 @@ function buildRuleRows(filtered) {
       <td>${esc(r.src_port)}</td>
       <td>${esc(r.dst_port)}</td>
       <td class="${actionClass}">${esc(r.action)}</td>
-      <td>${Number(r.packets).toLocaleString()}</td>
-      <td>${esc(r.bytes)}</td>
+      <td>${Number(counters ? counters.packets : r.packets).toLocaleString()}</td>
+      <td>${esc(counters ? formatBytes(counters.bytes) : r.bytes)}</td>
       <td style="color:${statusColor};font-family:monospace;">${statusDot} ${esc(r.status)}</td>
       <td>
         <button class="btn btn-sm btn-icon" onclick="prefillTest(${r.id})" title="Prefill Packet Tester">▶</button>
@@ -473,10 +505,25 @@ async function performFirewallToggle(newState) {
     renderMetrics();
     await loadLogs();
     renderLogs();
+      if (data.firewall_active && data.rollback_seconds) setRollbackBanner(true);
+      else setRollbackBanner(false);
     showAlert(
       data.firewall_active ? '🟢 Firewall ACTIVATED — kernel filtering enforced' : '🔴 Firewall DISABLED — all traffic passing',
       data.firewall_active ? 'success' : 'danger'
     );
+  } else {
+    showAlert('✕ Firewall update failed: ' + (data.error || 'Unknown error'), 'danger');
+  }
+}
+
+async function confirmFirewallRules() {
+  const { ok, data } = await apiFetch('/api/firewall/confirm', { method: 'POST', body: '{}' });
+  if (ok && data.success) {
+    setRollbackBanner(false);
+    showAlert(data.confirmed ? '✓ Firewall rules confirmed' : 'No pending rollback to confirm', 'success');
+    await loadStatus();
+  } else {
+    showAlert('✕ Could not confirm firewall rules: ' + (data.error || 'Unknown error'), 'danger');
   }
 }
 

@@ -4,6 +4,52 @@ A modern, college-level cybersecurity lab and interactive web dashboard for visu
 
 ---
 
+## ✅ Phase 3 Deliverable: Real iptables Integration
+
+The Flask API now uses `iptables_backend.py` for validated, argument-list command execution. `LAB_MODE` and `DRY_RUN` both default to `True`; on Windows and other non-Linux hosts the backend stays in safe mode. The web server binds to `127.0.0.1` and changing API requests require the `X-API-Token` header. The dashboard receives that token from the Flask-rendered page.
+
+### Safe local run
+
+```bash
+cd firewall-lab
+python -m pip install -r requirements.txt
+python app.py
+```
+
+Open `http://127.0.0.1:5000`. Safe mode generates command previews and does not execute iptables. The `/api/health` response reports the mode and backend availability.
+
+### Live Linux VM setup
+
+Use an Ubuntu Server VM and take a snapshot before live testing. Install iptables and the Python requirements. Do not run Flask as root. Configure a restricted sudoers entry for the exact paths returned by `which iptables`, `which iptables-save`, and `which iptables-restore`:
+
+```sudoers
+mayank ALL=(root) NOPASSWD: /usr/sbin/iptables, /usr/sbin/iptables-save, /usr/sbin/iptables-restore
+```
+
+Replace `mayank` and the paths for your VM. This is a lab shortcut; production should use a dedicated service account and stricter command wrappers. Set a long token and explicitly disable both safe-mode flags only on the VM:
+
+```bash
+LAB_MODE=False DRY_RUN=False CYBERGUARD_TOKEN='use-a-long-random-secret' python3 app.py
+```
+
+Access the VM dashboard through an SSH tunnel, for example `ssh -L 5000:127.0.0.1:5000 user@vm-ip`. Never bind this API to `0.0.0.0` or expose it directly to a network.
+
+When enabling, the backend validates the database rules, refuses an INPUT DROP policy without an SSH accept rule, backs up the current ruleset, applies loopback and established-connection baseline rules, and schedules rollback after 60 seconds. Click **Confirm Rules** to keep the new rules. `sync_all` rebuilds the filter chains from SQLite; it removes rules manually added to those chains. The app does not automatically synchronize at startup; use the dashboard enable action after a reboot.
+
+IPv6 is not managed, and the backend only handles simple filter rules. Docker, ufw, and other firewall managers can conflict. For production, use nftables, authenticated users, and HTTPS.
+
+### Backend unit tests
+
+The supplied unit tests are safe to run on any OS because they create a backend in dry-run mode:
+
+```bash
+python -m unittest test_iptables_backend -v
+```
+
+### Phase 3 VM test plan
+
+Use a second VM as the client and take screenshots for the report. Check `/api/health`, add an SSH ACCEPT rule, enable with INPUT DROP, and confirm within 60 seconds. Also check the lockout refusal with no SSH rule, automatic rollback when not confirmed, deletion from both the kernel and dashboard, counter changes after traffic, and rejection of malformed IPs and ports. Do not use the live commands on your laptop.
+
 ## ✅ Phase 2 Deliverable: Flask REST API + SQLite Persistent Backend
 
 > **Phase 2 is now complete.** The project runs as a full-stack web application. The frontend communicates with a Python Flask REST API which stores all rules and logs in a persistent SQLite database (`firewall.db`).

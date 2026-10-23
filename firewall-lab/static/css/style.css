@@ -884,3 +884,20 @@ input::placeholder, .form-input::placeholder { color: var(--text-muted); }
 }
 .vm-box:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
 
+.rollback-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--accent-yellow, #d97706);
+  border-radius: 8px;
+  background: rgba(217, 119, 6, 0.1);
+  color: var(--text-primary);
+}
+.rollback-banner[hidden] { display: none; }
+@media (max-width: 600px) {
+  .rollback-banner { align-items: flex-start; flex-direction: column; }
+}
+

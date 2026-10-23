@@ -8,8 +8,10 @@ import re
 import json
 import sqlite3
 import os
+from functools import wraps
 from datetime import datetime
 from flask import Flask, jsonify, request, render_template
+from iptables_backend import IptablesBackend, LockoutRisk, ValidationError, validate_rule
 
 # ---------------------------------------------
 # App & Config
@@ -17,8 +19,19 @@ from flask import Flask, jsonify, request, render_template
 app = Flask(__name__)
 DB_PATH = os.path.join(os.path.dirname(__file__), "firewall.db")
 
-LAB_MODE = True          # Set False only when running on a real Linux host with iptables
-DRY_RUN  = True          # Set False to actually run iptables subprocess commands (Phase 3)
+fw = IptablesBackend(ssh_port=22)
+API_TOKEN = os.environ.get("CYBERGUARD_TOKEN", "change-me")
+LAB_MODE = fw.lab_mode
+DRY_RUN = fw.dry_run
+
+
+def require_token(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if request.headers.get("X-API-Token") != API_TOKEN:
+            return jsonify({"success": False, "error": "Unauthorized"}), 401
+        return view(*args, **kwargs)
+    return wrapped
 
 
 # ---------------------------------------------
@@ -254,43 +267,20 @@ def server_evaluate(src_ip, dst_ip, protocol, dst_port, chain, rules, policies, 
     }
 
 
-# ---------------------------------------------
-# iptables subprocess (Phase 3 stub)
-# ---------------------------------------------
-def apply_iptables(rule, operation="add"):
-    chain  = rule["chain"]
-    proto  = rule["protocol"].lower()
-    src    = rule["src_ip"]
-    dst    = rule["dst_ip"]
-    sport  = rule["src_port"]
-    dport  = rule["dst_port"]
-    action = rule["action"]
+def backend_rule(rule):
+    """Map the SQLite/API naming to the backend's normalized rule shape."""
+    return validate_rule({
+        "id": rule.get("id"), "chain": rule.get("chain"),
+        "protocol": str(rule.get("protocol", "ALL")).lower(),
+        "src": rule.get("src_ip"), "dst": rule.get("dst_ip"),
+        "sport": rule.get("src_port"), "dport": rule.get("dst_port"),
+        "action": rule.get("action"),
+    })
 
-    parts = ["iptables", "-A" if operation == "add" else "-D", chain]
-    if proto != "all":
-        parts += ["-p", proto]
-    if src and src != "0.0.0.0/0":
-        parts += ["-s", src]
-    if dst and dst != "0.0.0.0/0":
-        parts += ["-d", dst]
-    if sport and sport != "any" and proto in ("tcp", "udp"):
-        parts += ["--sport", sport]
-    if dport and dport != "any" and proto in ("tcp", "udp"):
-        parts += ["--dport", dport]
-    parts += ["-j", action]
-    cmd = " ".join(parts)
 
-    if LAB_MODE or DRY_RUN:
-        return {"dry_run": True, "command": cmd}
-    else:
-        import subprocess
-        result = subprocess.run(parts, capture_output=True, text=True, timeout=5)
-        return {
-            "dry_run": False,
-            "command": cmd,
-            "returncode": result.returncode,
-            "stderr": result.stderr.strip()
-        }
+def policies_from_db(conn):
+    return {chain: conn.execute("SELECT value FROM settings WHERE key=?", (f"policy_{chain}",)).fetchone()["value"]
+            for chain in ("INPUT", "OUTPUT", "FORWARD")}
 
 
 # ---------------------------------------------
@@ -308,7 +298,7 @@ def _db_log(tag, message, result="OK"):
 # ---------------------------------------------
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", api_token=API_TOKEN)
 
 
 @app.route("/api/rules", methods=["GET"])
@@ -320,14 +310,29 @@ def api_get_rules():
 
 
 @app.route("/api/rules", methods=["POST"])
+@require_token
 def api_add_rule():
+    if fw.status()["rollback_pending"]:
+        return jsonify({"success": False, "error": "Confirm or wait for the pending firewall rollback before changing rules"}), 409
     data = request.get_json(silent=True)
-    if not data:
+    if not isinstance(data, dict) or not data:
         return jsonify({"success": False, "error": "No JSON body received"}), 400
 
-    clean, err = sanitize_rule(data)
-    if err:
-        return jsonify({"success": False, "error": err}), 422
+    try:
+        normalized = backend_rule({
+            "chain": data.get("chain", "INPUT"), "protocol": data.get("protocol", "TCP"),
+            "src_ip": data.get("src_ip", "0.0.0.0/0"), "dst_ip": data.get("dst_ip", "0.0.0.0/0"),
+            "src_port": data.get("src_port", "any"), "dst_port": data.get("dst_port", "any"),
+            "action": data.get("action", "DROP"),
+        })
+    except ValidationError as err:
+        return jsonify({"success": False, "error": str(err)}), 400
+    clean = {
+        "chain": normalized["chain"], "protocol": normalized["protocol"].upper(),
+        "src_ip": normalized["src"] or "0.0.0.0/0", "dst_ip": normalized["dst"] or "0.0.0.0/0",
+        "src_port": normalized["sport"] or "any", "dst_port": normalized["dport"] or "any",
+        "action": normalized["action"],
+    }
 
     conn = get_db()
     cursor = conn.execute("""
@@ -339,17 +344,26 @@ def api_add_rule():
     new_rule = dict(conn.execute("SELECT * FROM rules WHERE id=?", (new_id,)).fetchone())
     conn.close()
 
-    _db_log("RULE_ADD",
-            f"Added rule #{new_id}: {clean['chain']} {clean['protocol']} "
-            f"{clean['src_ip']} -> {clean['dst_ip']}:{clean['dst_port']} ({clean['action']})",
-            "SUCCESS")
+    is_enabled = setting_get("firewall_active").lower() == "true"
+    result = fw.apply_rule(backend_rule(new_rule)) if is_enabled else None
+    if result is not None and not result.ok:
+        conn = get_db()
+        conn.execute("DELETE FROM rules WHERE id=?", (new_id,))
+        conn.commit()
+        conn.close()
+        return jsonify({"success": False, "error": result.stderr or "iptables failed",
+                        "command": result.command}), 500
 
-    iptables_result = apply_iptables(new_rule, "add")
-    return jsonify({"success": True, "rule": new_rule, "iptables": iptables_result}), 201
+    _db_log("RULE_ADD", f"Added rule #{new_id}" + (f": {result.command}" if result else " (stored while firewall disabled)"), "SUCCESS")
+    return jsonify({"success": True, "rule": new_rule,
+                    "iptables": result.as_dict() if result else None}), 201
 
 
 @app.route("/api/rules/<int:rule_id>", methods=["DELETE"])
+@require_token
 def api_delete_rule(rule_id):
+    if fw.status()["rollback_pending"]:
+        return jsonify({"success": False, "error": "Confirm or wait for the pending firewall rollback before changing rules"}), 409
     conn = get_db()
     rule = conn.execute("SELECT * FROM rules WHERE id=?", (rule_id,)).fetchone()
     if not rule:
@@ -357,16 +371,26 @@ def api_delete_rule(rule_id):
         return jsonify({"success": False, "error": f"Rule #{rule_id} not found"}), 404
 
     rule_dict = dict(rule)
+    conn.close()
+    is_enabled = setting_get("firewall_active").lower() == "true"
+    try:
+        result = fw.remove_rule(backend_rule(rule_dict)) if is_enabled else None
+    except ValidationError as err:
+        return jsonify({"success": False, "error": str(err)}), 400
+    if result is not None and not result.ok:
+        return jsonify({"success": False, "error": result.stderr or "iptables failed",
+                        "command": result.command}), 500
+    conn = get_db()
     conn.execute("DELETE FROM rules WHERE id=?", (rule_id,))
     conn.commit()
     conn.close()
-
-    _db_log("RULE_DELETE", f"Deleted rule #{rule_id}", "SUCCESS")
-    iptables_result = apply_iptables(rule_dict, "delete")
-    return jsonify({"success": True, "deleted_id": rule_id, "iptables": iptables_result})
+    _db_log("RULE_DELETE", f"Deleted rule #{rule_id}" + (f": {result.command}" if result else " (removed while firewall disabled)"), "SUCCESS")
+    return jsonify({"success": True, "deleted_id": rule_id,
+                    "iptables": result.as_dict() if result else None})
 
 
 @app.route("/api/simulate", methods=["POST"])
+@require_token
 def api_simulate():
     data = request.get_json(silent=True)
     if not data:
@@ -421,17 +445,50 @@ def api_firewall_status():
         "policies": policies,
         "lab_mode": LAB_MODE,
         "dry_run": DRY_RUN,
+        **fw.status(),
     })
 
 
 @app.route("/api/firewall/toggle", methods=["POST"])
+@require_token
 def api_firewall_toggle():
     data      = request.get_json(silent=True) or {}
-    new_state = bool(data.get("active", False))
+    new_state = data.get("active")
+    if not isinstance(new_state, bool):
+        return jsonify({"success": False, "error": "active must be a boolean"}), 400
+    conn = get_db()
+    rules = [backend_rule(dict(row)) for row in conn.execute("SELECT * FROM rules WHERE status='ACTIVE' ORDER BY id").fetchall()]
+    policies = policies_from_db(conn)
+    conn.close()
+    try:
+        if new_state:
+            info = fw.sync_all(rules, policies, rollback_seconds=60)
+        else:
+            fw.confirm()
+            info = {"results": [result.as_dict() for result in fw.disable()], "rollback_seconds": None}
+    except LockoutRisk as err:
+        return jsonify({"success": False, "error": str(err)}), 409
+    except ValidationError as err:
+        return jsonify({"success": False, "error": str(err)}), 400
+    failed = next((item for item in info["results"] if not item["ok"]), None)
+    if failed:
+        return jsonify({"success": False, "error": failed["stderr"] or "iptables failed",
+                        "command": failed["command"]}), 500
     setting_set("firewall_active", "true" if new_state else "false")
     msg = "Firewall ACTIVATED - kernel filtering enforced" if new_state else "Firewall DISABLED - all traffic passing"
     _db_log("STATUS", msg, "SUCCESS")
-    return jsonify({"success": True, "firewall_active": new_state, "message": msg})
+    return jsonify({"success": True, "firewall_active": new_state, "message": msg, **info})
+
+
+@app.route("/api/firewall/confirm", methods=["POST"])
+@require_token
+def api_firewall_confirm():
+    return jsonify({"success": True, "confirmed": fw.confirm()})
+
+
+@app.route("/api/live/counters", methods=["GET"])
+def api_live_counters():
+    return jsonify(fw.counters("INPUT"))
 
 
 @app.route("/api/logs", methods=["GET"])
@@ -444,6 +501,7 @@ def api_get_logs():
 
 
 @app.route("/api/logs", methods=["DELETE"])
+@require_token
 def api_clear_logs():
     conn = get_db()
     conn.execute("DELETE FROM logs")
@@ -473,15 +531,16 @@ def api_health():
         "lab_mode": LAB_MODE,
         "dry_run": DRY_RUN,
         "db": DB_PATH,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        **fw.status(),
     })
 
 
 if __name__ == "__main__":
     init_db()
     print("=" * 55)
-    print("  CyberGuard Firewall Lab - Phase 2 Backend")
+    print("  CyberGuard Firewall Lab - Phase 3 Backend")
     print("  Flask + SQLite  |  LAB_MODE =", LAB_MODE)
     print("  http://127.0.0.1:5000")
     print("=" * 55)
-    app.run(debug=True, host="127.0.0.1", port=5000)
+    app.run(debug=False, host="127.0.0.1", port=5000)
